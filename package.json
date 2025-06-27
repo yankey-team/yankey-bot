@@ -1,0 +1,29 @@
+{
+  "name": "yankey_bot",
+  "version": "1.0.0",
+  "description": "YankeyBot",
+  "keywords": [
+    "Yankey"
+  ],
+  "license": "ISC",
+  "author": "Firdavs Beknazarov",
+  "type": "module",
+  "main": "src/app.ts",
+  "scripts": {
+    "start": "tsc && node dist/app.js"
+  },
+  "devDependencies": {
+    "@telegraf/types": "^8.3.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.50.0",
+    "@telegraf/session": "^2.0.0-beta.7",
+    "dotenv": "^16.5.0",
+    "mongodb": "^6.17.0",
+    "telegraf": "^4.16.3",
+    "telegraf-session-mongodb": "^2.0.2"
+  }
+}
