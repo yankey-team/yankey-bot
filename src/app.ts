@@ -3,8 +3,20 @@ import * as dotenv from "dotenv";
 import { Context, Telegraf, session } from "telegraf";
 import { message } from "telegraf/filters";
 import { MongoClient } from "mongodb";
+import axios from "axios";
 
 dotenv.config();
+
+const API_BASE_URL = process.env.API_URL || "http://demo.yankey.local:3000";
+const DEFAULT_BIRTHDAY = "1995-10-11";
+
+// API client
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    "Content-Type": "application/json"
+  }
+});
 
 export type State = "choose_language" | "ask_full_name" | "ask_contact" | "authenticated";
 
@@ -14,6 +26,7 @@ interface YankeyContext extends Context {
     lang?: keyof typeof languageOptions;
     full_name?: string;
     phone_number?: string;
+    token?: string;
   };
 }
 
@@ -28,7 +41,9 @@ const languageOptions = {
     send_contact: "Telefon raqamni yuborish",
     view_balance: "Balansni ko'rish",
     change_language: "Tilni o'zgartirish",
-    language_changed: "Til muvaffaqiyatli o'zgartirildi!"
+    language_changed: "Til muvaffaqiyatli o'zgartirildi!",
+    error_try_again: "Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.",
+    balance_info: "Sizning balansingiz: {balance}\nMerchant: {merchant}\nCashback: {loyalty}%"
   },
   rus: {
     success: "✅ Принят",
@@ -40,7 +55,9 @@ const languageOptions = {
     send_contact: "Отправить номер телефона",
     view_balance: "Посмотреть баланс",
     change_language: "Сменить язык",
-    language_changed: "Язык успешно изменён!"
+    language_changed: "Язык успешно изменён!",
+    error_try_again: "Произошла ошибка. Пожалуйста, попробуйте снова.",
+    balance_info: "Ваш баланс: {balance}\nПродавец: {merchant}\nКэшбэк: {loyalty}%"
   }
 };
 
@@ -152,6 +169,45 @@ async function main() {
     }
   });
 
+  // Add balance view handler before the text message handler
+  bot.hears([
+    languageOptions.uzb.view_balance,
+    languageOptions.rus.view_balance
+  ], async (ctx) => {
+    const lang = ctx.session.lang || "uzb";
+    if (!ctx.session.token) {
+      ctx.session.state = "choose_language";
+      return processStateMessage("choose_language", ctx);
+    }
+
+    try {
+      console.log(ctx.session.token);
+      const response = await api.get("/user/balance", {
+        headers: {
+          Authorization: `Bearer ${ctx.session.token}`
+        }
+      });
+
+      const { balance, merchant } = response.data.data;
+      const balanceMessage = languageOptions[lang].balance_info
+        .replace("{balance}", balance.toString())
+        .replace("{merchant}", merchant.name)
+        .replace("{loyalty}", merchant.loyaltyPercentage.toString());
+
+      await ctx.reply(balanceMessage);
+    } catch (error) {
+      console.error("Balance fetch error:", error);
+      await ctx.reply(languageOptions[lang].error_try_again);
+      
+      // If token is invalid, reset authentication
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        ctx.session.token = undefined;
+        ctx.session.state = "choose_language";
+        return processStateMessage("choose_language", ctx);
+      }
+    }
+  });
+
   bot.on(message("text"), async (ctx) => {
     const { state, lang } = ctx.session;
     if (!lang || state === "choose_language") {
@@ -170,10 +226,30 @@ async function main() {
 
   bot.on(message("contact"), async (ctx) => {
     if (ctx.session.state === "ask_contact" && ctx.message.contact) {
-      ctx.session.phone_number = ctx.message.contact.phone_number;
-      ctx.session.state = "authenticated";
-      await ctx.reply(languageOptions[ctx.session.lang || "uzb"].success);
-      return processStateMessage("authenticated", ctx);
+      try {
+        ctx.session.phone_number = ctx.message.contact.phone_number;
+        
+        // Authenticate with API
+        const response = await api.post("/user/auth/login", {
+          displayName: ctx.session.full_name,
+          phoneNumber: ctx.session.phone_number,
+          birthday: DEFAULT_BIRTHDAY
+        });
+
+        ctx.session.token = response.data.data.token;
+        ctx.session.state = "authenticated";
+        
+        await ctx.reply(languageOptions[ctx.session.lang || "uzb"].success);
+        return processStateMessage("authenticated", ctx);
+      } catch (error) {
+        console.error("Authentication error:", error);
+        // Reset the state and ask to try again
+        ctx.session.state = "ask_full_name";
+        ctx.session.full_name = undefined;
+        ctx.session.phone_number = undefined;
+        await ctx.reply("❌ " + languageOptions[ctx.session.lang || "uzb"].error_try_again);
+        return processStateMessage("ask_full_name", ctx);
+      }
     }
   });
 
